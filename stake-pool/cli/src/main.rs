@@ -304,21 +304,35 @@ fn command_create_pool(
             &stake::state::Lockup::default(),
         ),
         // Account for the stake pool mint
-        system_instruction::create_account(
-            &config.fee_payer.pubkey(),
-            &mint_keypair.pubkey(),
-            mint_account_balance,
-            spl_token::state::Mint::LEN as u64,
-            &spl_token::id(),
-        ),
+        // system_instruction::create_account(
+        //     &config.fee_payer.pubkey(),
+        //     &mint_keypair.pubkey(),
+        //     mint_account_balance,
+        //     spl_token::state::Mint::LEN as u64,
+        //     &spl_token::id(),
+        // ),
         // Initialize pool token mint account
-        spl_token::instruction::initialize_mint(
+        // spl_token::instruction::initialize_mint(
+        //     &spl_token::id(),
+        //     &mint_keypair.pubkey(),
+        //     &withdraw_authority,
+        //     None,
+        //     default_decimals,
+        // )?,
+        spl_token::instruction::set_authority(
             &spl_token::id(),
             &mint_keypair.pubkey(),
-            &withdraw_authority,
-            None,
-            default_decimals,
-        )?,
+            Some(&withdraw_authority),
+            spl_token::instruction::AuthorityType::MintTokens,
+            &config.manager.pubkey(),
+            vec![
+                &config.fee_payer.pubkey(),
+                &mint_keypair.pubkey(),
+                &reserve_keypair.pubkey(),
+            ]
+            .as_slice(),
+        )
+        .unwrap(),
     ];
 
     let pool_fee_account = add_associated_token_account(
