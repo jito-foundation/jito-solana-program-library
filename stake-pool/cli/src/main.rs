@@ -236,6 +236,7 @@ fn command_create_pool(
     mint_keypair: Option<Keypair>,
     reserve_keypair: Option<Keypair>,
     unsafe_fees: bool,
+    use_existing_mint: bool,
 ) -> CommandResult {
     if !unsafe_fees {
         check_stake_pool_fees(&epoch_fee, &withdrawal_fee, &deposit_fee)?;
@@ -303,37 +304,50 @@ fn command_create_pool(
             },
             &stake::state::Lockup::default(),
         ),
-        // Account for the stake pool mint
-        // system_instruction::create_account(
-        //     &config.fee_payer.pubkey(),
-        //     &mint_keypair.pubkey(),
-        //     mint_account_balance,
-        //     spl_token::state::Mint::LEN as u64,
-        //     &spl_token::id(),
-        // ),
-        // Initialize pool token mint account
-        // spl_token::instruction::initialize_mint(
-        //     &spl_token::id(),
-        //     &mint_keypair.pubkey(),
-        //     &withdraw_authority,
-        //     None,
-        //     default_decimals,
-        // )?,
-        spl_token::instruction::set_authority(
-            &spl_token::id(),
-            &mint_keypair.pubkey(),
-            Some(&withdraw_authority),
-            spl_token::instruction::AuthorityType::MintTokens,
-            &config.manager.pubkey(),
-            vec![
+    ];
+
+    if use_existing_mint {
+        // In this case, we've already created an spl token mint, we just
+        // need to set the mint token authority to the stake pool withdraw authority
+        instructions.push(
+            spl_token::instruction::set_authority(
+                &spl_token::id(),
+                &mint_keypair.pubkey(),
+                Some(&withdraw_authority),
+                spl_token::instruction::AuthorityType::MintTokens,
+                &config.manager.pubkey(),
+                vec![
+                    &config.fee_payer.pubkey(),
+                    &mint_keypair.pubkey(),
+                    &reserve_keypair.pubkey(),
+                ]
+                .as_slice(),
+            )
+            .unwrap(),
+        );
+    } else {
+        // This means that we haven't created the mint account
+        instructions.push(
+            // Account for the stake pool mint
+            system_instruction::create_account(
                 &config.fee_payer.pubkey(),
                 &mint_keypair.pubkey(),
-                &reserve_keypair.pubkey(),
-            ]
-            .as_slice(),
-        )
-        .unwrap(),
-    ];
+                mint_account_balance,
+                spl_token::state::Mint::LEN as u64,
+                &spl_token::id(),
+            ),
+        );
+        instructions.push(
+            // Initialize pool token mint account
+            spl_token::instruction::initialize_mint(
+                &spl_token::id(),
+                &mint_keypair.pubkey(),
+                &withdraw_authority,
+                None,
+                default_decimals,
+            )?,
+        );
+    }
 
     let pool_fee_account = add_associated_token_account(
         config,
@@ -2092,6 +2106,12 @@ fn main() {
                     .takes_value(false)
                     .help("Bypass fee checks, allowing pool to be created with unsafe fees"),
             )
+            .arg(
+                Arg::with_name("use_existing_mint_authority")
+                    .long("use-existing-mint-authority")
+                    .takes_value(true)
+                    .help("use existing mint token authority account")
+            )
         )
         .subcommand(SubCommand::with_name("add-validator")
             .about("Add validator account to the stake pool. Must be signed by the pool staker.")
@@ -2792,6 +2812,7 @@ fn main() {
             let mint_keypair = keypair_of(arg_matches, "mint_keypair");
             let reserve_keypair = keypair_of(arg_matches, "reserve_keypair");
             let unsafe_fees = arg_matches.is_present("unsafe_fees");
+            let use_existing_mint = arg_matches.is_present("use_existing_mint_authority");
             command_create_pool(
                 &config,
                 deposit_authority,
@@ -2814,6 +2835,7 @@ fn main() {
                 mint_keypair,
                 reserve_keypair,
                 unsafe_fees,
+                use_existing_mint,
             )
         }
         ("add-validator", Some(arg_matches)) => {
