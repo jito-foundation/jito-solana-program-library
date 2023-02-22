@@ -135,4 +135,4 @@ pub fn find_transient_stake_program_address(
     )
 }
 
-solana_program::declare_id!("SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy");
+solana_program::declare_id!("69qsTyvJ1eUXSrH1dxPSpuE5wdErCYqAWEhZMRXfTJoK");

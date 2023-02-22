@@ -68,6 +68,7 @@ pub(crate) struct Config {
     fee_payer: Box<dyn Signer>,
     dry_run: bool,
     no_update: bool,
+    all_validators: bool,
 }
 
 type Error = Box<dyn std::error::Error>;
@@ -1062,7 +1063,7 @@ fn command_list(config: &Config, stake_pool_address: &Pubkey) -> CommandResult {
         .rpc_client
         .get_minimum_balance_for_rent_exemption(STAKE_STATE_LEN)?
         + MINIMUM_RESERVE_LAMPORTS;
-    let cli_stake_pool_stake_account_infos = validator_list
+    let mut cli_stake_pool_stake_account_infos: Vec<CliStakePoolStakeAccountInfo> = validator_list
         .validators
         .iter()
         .map(|validator| {
@@ -1091,6 +1092,12 @@ fn command_list(config: &Config, stake_pool_address: &Pubkey) -> CommandResult {
             }
         })
         .collect();
+    if !config.all_validators {
+        cli_stake_pool_stake_account_infos = cli_stake_pool_stake_account_infos
+            .into_iter()
+            .filter(|info| info.validator_lamports > 0)
+            .collect();
+    }
     let total_pool_tokens =
         spl_token::amount_to_ui_amount(stake_pool.pool_token_supply, pool_mint.decimals);
     let mut cli_stake_pool = CliStakePool::from((
@@ -1956,6 +1963,15 @@ fn main() {
                 .takes_value(true)
                 .help("Transaction fee payer account [default: cli config keypair]"),
         )
+        .arg(
+            Arg::with_name("all_validators")
+            .long("all-validators")
+            .value_name("ALL_VALIDATORS")
+            .takes_value(false)
+            .requires("verbose")
+            .global(true)
+            .help("Show every validator in the stake pool instead of just staked validators"),
+        )
         .subcommand(SubCommand::with_name("create-pool")
             .about("Create a new stake pool")
             .arg(
@@ -2747,6 +2763,7 @@ fn main() {
             });
         let dry_run = matches.is_present("dry_run");
         let no_update = matches.is_present("no_update");
+        let all_validators = matches.is_present("all_validators");
 
         Config {
             rpc_client: RpcClient::new_with_commitment(json_rpc_url, CommitmentConfig::confirmed()),
@@ -2759,6 +2776,7 @@ fn main() {
             fee_payer,
             dry_run,
             no_update,
+            all_validators,
         }
     };
 
