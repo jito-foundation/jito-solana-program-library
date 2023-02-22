@@ -32,25 +32,32 @@ pub enum ConfidentialTransferInstruction {
     /// The instruction fails if the `TokenInstruction::InitializeMint` instruction has already
     /// executed for the mint.
     ///
+    /// Note that the `withdraw_withheld_authority_encryption_pubkey` cannot be updated after it is
+    /// initialized.
+    ///
     /// Accounts expected by this instruction:
     ///
     ///   0. `[writable]` The SPL Token mint.
     ///
     /// Data expected by this instruction:
-    ///   `ConfidentialTransferMint`
+    ///   `InitializeMintData`
     ///
     InitializeMint,
 
     /// Updates the confidential transfer mint configuration for a mint.
     ///
+    /// Use `TokenInstruction::SetAuthority` to update the confidential transfer mint authority.
+    ///
+    /// The `withdraw_withheld_authority_encryption_pubkey` and `withheld_amount` ciphertext are
+    /// not updatable.
+    ///
     /// Accounts expected by this instruction:
     ///
     ///   0. `[writable]` The SPL Token mint.
     ///   1. `[signer]` Confidential transfer mint authority.
-    ///   2. `[signer]` New confidential transfer mint authority.
     ///
     /// Data expected by this instruction:
-    ///   `ConfidentialTransferMint`
+    ///   `UpdateMintData`
     ///
     UpdateMint,
 
@@ -62,21 +69,26 @@ pub enum ConfidentialTransferInstruction {
     /// The instruction fails if the `TokenInstruction::InitializeAccount` instruction has not yet
     /// successfully executed for the token account.
     ///
-    /// Upon success confidential deposits and transfers are enabled, use the
-    /// `DisableBalanceCredits` instruction to disable.
+    /// Upon success, confidential and non-confidential deposits and transfers are enabled. Use the
+    /// `DisableConfidentialCredits` and `DisableNonConfidentialCredits` instructions to disable.
+    ///
+    /// In order for this instruction to be successfully processed, it must be accompanied by the
+    /// `VerifyPubkey` instruction of the `zk_token_proof` program in the same transaction.
     ///
     /// Accounts expected by this instruction:
     ///
     ///   * Single owner/delegate
     ///   0. `[writeable]` The SPL Token account.
     ///   1. `[]` The corresponding SPL Token mint.
-    ///   2. `[signer]` The single source account owner.
+    ///   2. `[]` Instructions sysvar.
+    ///   3. `[signer]` The single source account owner.
     ///
     ///   * Multisignature owner/delegate
     ///   0. `[writeable]` The SPL Token account.
     ///   1. `[]` The corresponding SPL Token mint.
     ///   2. `[]` The multisig source account owner.
-    ///   3.. `[signer]` Required M signer accounts for the SPL Token Multisig account.
+    ///   3. `[]` Instructions sysvar.
+    ///   4.. `[signer]` Required M signer accounts for the SPL Token Multisig account.
     ///
     /// Data expected by this instruction:
     ///   `ConfigureAccountInstructionData`
@@ -103,8 +115,8 @@ pub enum ConfidentialTransferInstruction {
 
     /// Prepare a token account for closing.  The account must not hold any confidential tokens in
     /// its pending or available balances. Use
-    /// `ConfidentialTransferInstruction::DisableBalanceCredits` to block balance credit changes
-    /// first if necessary.
+    /// `ConfidentialTransferInstruction::DisableConfidentialCredits` to block balance credit
+    /// changes first if necessary.
     ///
     /// Note that a newly configured account is always empty, so this instruction is not required
     /// prior to account closing if no instructions beyond
@@ -237,7 +249,7 @@ pub enum ConfidentialTransferInstruction {
     ///
     ApplyPendingBalance,
 
-    /// Enable confidential transfer `Deposit` and `Transfer` instructions for a token account.
+    /// Configure a confidential extension account to accept incoming confidential transfers.
     ///
     /// Accounts expected by this instruction:
     ///
@@ -253,9 +265,15 @@ pub enum ConfidentialTransferInstruction {
     /// Data expected by this instruction:
     ///   None
     ///
-    EnableBalanceCredits,
+    EnableConfidentialCredits,
 
-    /// Disable confidential transfer `Deposit` and `Transfer` instructions for a token account.
+    /// Configure a confidential extension account to reject any incoming confidential transfers.
+    ///
+    /// If the `allow_non_confidential_credits` field is `true`, then the base account can still
+    /// receive non-confidential transfers.
+    ///
+    /// This instruction can be used to disable confidential payments after a token account has
+    /// already been extended for confidential transfers.
     ///
     /// Accounts expected by this instruction:
     ///
@@ -271,7 +289,48 @@ pub enum ConfidentialTransferInstruction {
     /// Data expected by this instruction:
     ///   None
     ///
-    DisableBalanceCredits,
+    DisableConfidentialCredits,
+
+    /// Configure an account with the confidential extension to accept incoming non-confidential
+    /// transfers.
+    ///
+    /// Accounts expected by this instruction:
+    ///
+    ///   * Single owner/delegate
+    ///   0. `[writable]` The SPL Token account.
+    ///   1. `[signer]` The single account owner.
+    ///
+    ///   * Multisignature owner/delegate
+    ///   0. `[writable]` The SPL Token account.
+    ///   1. `[]` The multisig account owner.
+    ///   2.. `[signer]` Required M signer accounts for the SPL Token Multisig account.
+    ///
+    /// Data expected by this instruction:
+    ///   None
+    ///
+    EnableNonConfidentialCredits,
+
+    /// Configure an account with the confidential extension to reject any incoming
+    /// non-confidential transfers.
+    ///
+    /// This instruction can be used to configure a confidential extension account to exclusively
+    /// receive confidential payments.
+    ///
+    /// Accounts expected by this instruction:
+    ///
+    ///   * Single owner/delegate
+    ///   0. `[writable]` The SPL Token account.
+    ///   1. `[signer]` The single account owner.
+    ///
+    ///   * Multisignature owner/delegate
+    ///   0. `[writable]` The SPL Token account.
+    ///   1. `[]` The multisig account owner.
+    ///   2.. `[signer]` Required M signer accounts for the SPL Token Multisig account.
+    ///
+    /// Data expected by this instruction:
+    ///   None
+    ///
+    DisableNonConfidentialCredits,
 
     /// Transfer all withheld confidential tokens in the mint to an account. Signed by the mint's
     /// withdraw withheld tokens authority.
@@ -367,21 +426,49 @@ pub enum ConfidentialTransferInstruction {
     HarvestWithheldTokensToMint,
 }
 
+/// Data expected by `ConfidentialTransferInstruction::InitializeMint`
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+#[repr(C)]
+pub struct InitializeMintData {
+    /// Authority to modify the `ConfidentialTransferMint` configuration and to approve new
+    /// accounts.
+    pub authority: OptionalNonZeroPubkey,
+    /// Determines if newly configured accounts must be approved by the `authority` before they may
+    /// be used by the user.
+    pub auto_approve_new_accounts: PodBool,
+    /// New authority to decode any transfer amount in a confidential transfer.
+    pub auditor_encryption_pubkey: OptionalNonZeroEncryptionPubkey,
+    /// Authority to withdraw withheld fees that are associated with accounts.
+    pub withdraw_withheld_authority_encryption_pubkey: OptionalNonZeroEncryptionPubkey,
+}
+
+/// Data expected by `ConfidentialTransferInstruction::UpdateMint`
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+#[repr(C)]
+pub struct UpdateMintData {
+    /// Determines if newly configured accounts must be approved by the `authority` before they may
+    /// be used by the user.
+    pub auto_approve_new_accounts: PodBool,
+    /// New authority to decode any transfer amount in a confidential transfer.
+    pub auditor_encryption_pubkey: OptionalNonZeroEncryptionPubkey,
+}
+
 /// Data expected by `ConfidentialTransferInstruction::ConfigureAccount`
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 #[repr(C)]
 pub struct ConfigureAccountInstructionData {
-    /// The public key associated with the account
-    pub encryption_pubkey: EncryptionPubkey,
     /// The decryptable balance (always 0) once the configure account succeeds
     pub decryptable_zero_balance: DecryptableBalance,
     /// The maximum number of despots and transfers that an account can receiver before the
     /// `ApplyPendingBalance` is executed
     pub maximum_pending_balance_credit_counter: PodU64,
+    /// Relative location of the `ProofInstruction::VerifyPubkey` instruction to the
+    /// `ConfigureAccount` instruction in the transaction
+    pub proof_instruction_offset: i8,
 }
 
 /// Data expected by `ConfidentialTransferInstruction::EmptyAccount`
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 #[repr(C)]
 pub struct EmptyAccountInstructionData {
     /// Relative location of the `ProofInstruction::VerifyCloseAccount` instruction to the
@@ -390,7 +477,7 @@ pub struct EmptyAccountInstructionData {
 }
 
 /// Data expected by `ConfidentialTransferInstruction::Deposit`
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 #[repr(C)]
 pub struct DepositInstructionData {
     /// The amount of tokens to deposit
@@ -400,7 +487,7 @@ pub struct DepositInstructionData {
 }
 
 /// Data expected by `ConfidentialTransferInstruction::Withdraw`
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 #[repr(C)]
 pub struct WithdrawInstructionData {
     /// The amount of tokens to withdraw
@@ -415,7 +502,7 @@ pub struct WithdrawInstructionData {
 }
 
 /// Data expected by `ConfidentialTransferInstruction::Transfer`
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 #[repr(C)]
 pub struct TransferInstructionData {
     /// The new source decryptable balance if the transfer succeeds
@@ -426,7 +513,7 @@ pub struct TransferInstructionData {
 }
 
 /// Data expected by `ConfidentialTransferInstruction::ApplyPendingBalance`
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 #[repr(C)]
 pub struct ApplyPendingBalanceData {
     /// The expected number of pending balance credits since the last successful
@@ -437,7 +524,7 @@ pub struct ApplyPendingBalanceData {
 }
 
 /// Data expected by `ConfidentialTransferInstruction::WithdrawWithheldTokensFromMint`
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 #[repr(C)]
 pub struct WithdrawWithheldTokensFromMintData {
     /// Relative location of the `ProofInstruction::VerifyWithdrawWithheld` instruction to the
@@ -446,7 +533,7 @@ pub struct WithdrawWithheldTokensFromMintData {
 }
 
 /// Data expected by `ConfidentialTransferInstruction::WithdrawWithheldTokensFromAccounts`
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 #[repr(C)]
 pub struct WithdrawWithheldTokensFromAccountsData {
     /// Number of token accounts harvested
@@ -457,64 +544,81 @@ pub struct WithdrawWithheldTokensFromAccountsData {
 }
 
 /// Create a `InitializeMint` instruction
+#[cfg(not(target_os = "solana"))]
 pub fn initialize_mint(
     token_program_id: &Pubkey,
     mint: &Pubkey,
-    ct_mint: &ConfidentialTransferMint,
+    authority: Option<Pubkey>,
+    auto_approve_new_accounts: bool,
+    auditor_encryption_pubkey: Option<EncryptionPubkey>,
+    withdraw_withheld_authority_encryption_pubkey: Option<EncryptionPubkey>,
 ) -> Result<Instruction, ProgramError> {
     check_program_account(token_program_id)?;
     let accounts = vec![AccountMeta::new(*mint, false)];
+
     Ok(encode_instruction(
         token_program_id,
         accounts,
         TokenInstruction::ConfidentialTransferExtension,
         ConfidentialTransferInstruction::InitializeMint,
-        ct_mint,
+        &InitializeMintData {
+            authority: authority.try_into()?,
+            auto_approve_new_accounts: auto_approve_new_accounts.into(),
+            auditor_encryption_pubkey: auditor_encryption_pubkey.try_into()?,
+            withdraw_withheld_authority_encryption_pubkey:
+                withdraw_withheld_authority_encryption_pubkey.try_into()?,
+        },
     ))
 }
 
 /// Create a `UpdateMint` instruction
+#[cfg(not(target_os = "solana"))]
 pub fn update_mint(
     token_program_id: &Pubkey,
     mint: &Pubkey,
-    new_ct_mint: &ConfidentialTransferMint,
     authority: &Pubkey,
+    auto_approve_new_accounts: bool,
+    auditor_encryption_pubkey: Option<EncryptionPubkey>,
 ) -> Result<Instruction, ProgramError> {
     check_program_account(token_program_id)?;
+
     let accounts = vec![
         AccountMeta::new(*mint, false),
         AccountMeta::new_readonly(*authority, true),
-        AccountMeta::new_readonly(
-            new_ct_mint.authority,
-            new_ct_mint.authority != Pubkey::default(),
-        ),
     ];
+
     Ok(encode_instruction(
         token_program_id,
         accounts,
         TokenInstruction::ConfidentialTransferExtension,
         ConfidentialTransferInstruction::UpdateMint,
-        new_ct_mint,
+        &UpdateMintData {
+            auto_approve_new_accounts: auto_approve_new_accounts.into(),
+            auditor_encryption_pubkey: auditor_encryption_pubkey.try_into()?,
+        },
     ))
 }
 
 /// Create a `ConfigureAccount` instruction
+///
+/// This instruction is suitable for use with a cross-program `invoke`
 #[allow(clippy::too_many_arguments)]
 #[cfg(not(target_os = "solana"))]
-pub fn configure_account(
+pub fn inner_configure_account(
     token_program_id: &Pubkey,
     token_account: &Pubkey,
     mint: &Pubkey,
-    encryption_pubkey: EncryptionPubkey,
     decryptable_zero_balance: AeCiphertext,
     maximum_pending_balance_credit_counter: u64,
     authority: &Pubkey,
     multisig_signers: &[&Pubkey],
+    proof_instruction_offset: i8,
 ) -> Result<Instruction, ProgramError> {
     check_program_account(token_program_id)?;
     let mut accounts = vec![
         AccountMeta::new(*token_account, false),
         AccountMeta::new_readonly(*mint, false),
+        AccountMeta::new_readonly(sysvar::instructions::id(), false),
         AccountMeta::new_readonly(*authority, multisig_signers.is_empty()),
     ];
 
@@ -528,11 +632,39 @@ pub fn configure_account(
         TokenInstruction::ConfidentialTransferExtension,
         ConfidentialTransferInstruction::ConfigureAccount,
         &ConfigureAccountInstructionData {
-            encryption_pubkey,
             decryptable_zero_balance: decryptable_zero_balance.into(),
             maximum_pending_balance_credit_counter: maximum_pending_balance_credit_counter.into(),
+            proof_instruction_offset,
         },
     ))
+}
+
+/// Create a `ConfigureAccount` instruction
+#[allow(clippy::too_many_arguments)]
+#[cfg(not(target_os = "solana"))]
+pub fn configure_account(
+    token_program_id: &Pubkey,
+    token_account: &Pubkey,
+    mint: &Pubkey,
+    decryptable_zero_balance: AeCiphertext,
+    maximum_pending_balance_credit_counter: u64,
+    authority: &Pubkey,
+    multisig_signers: &[&Pubkey],
+    proof_data: &PubkeyValidityData,
+) -> Result<Vec<Instruction>, ProgramError> {
+    Ok(vec![
+        inner_configure_account(
+            token_program_id,
+            token_account,
+            mint,
+            decryptable_zero_balance,
+            maximum_pending_balance_credit_counter,
+            authority,
+            multisig_signers,
+            1,
+        )?,
+        verify_pubkey_validity(proof_data),
+    ])
 }
 
 /// Create an `ApproveAccount` instruction
@@ -888,15 +1020,15 @@ fn enable_or_disable_balance_credits(
     ))
 }
 
-/// Create a `EnableBalanceCredits` instruction
-pub fn enable_balance_credits(
+/// Create a `EnableConfidentialCredits` instruction
+pub fn enable_confidential_credits(
     token_program_id: &Pubkey,
     token_account: &Pubkey,
     authority: &Pubkey,
     multisig_signers: &[&Pubkey],
 ) -> Result<Instruction, ProgramError> {
     enable_or_disable_balance_credits(
-        ConfidentialTransferInstruction::EnableBalanceCredits,
+        ConfidentialTransferInstruction::EnableConfidentialCredits,
         token_program_id,
         token_account,
         authority,
@@ -904,15 +1036,47 @@ pub fn enable_balance_credits(
     )
 }
 
-/// Create a `DisableBalanceCredits` instruction
-pub fn disable_balance_credits(
+/// Create a `DisableConfidentialCredits` instruction
+pub fn disable_confidential_credits(
     token_program_id: &Pubkey,
     token_account: &Pubkey,
     authority: &Pubkey,
     multisig_signers: &[&Pubkey],
 ) -> Result<Instruction, ProgramError> {
     enable_or_disable_balance_credits(
-        ConfidentialTransferInstruction::DisableBalanceCredits,
+        ConfidentialTransferInstruction::DisableConfidentialCredits,
+        token_program_id,
+        token_account,
+        authority,
+        multisig_signers,
+    )
+}
+
+/// Create a `EnableNonConfidentialCredits` instruction
+pub fn enable_non_confidential_credits(
+    token_program_id: &Pubkey,
+    token_account: &Pubkey,
+    authority: &Pubkey,
+    multisig_signers: &[&Pubkey],
+) -> Result<Instruction, ProgramError> {
+    enable_or_disable_balance_credits(
+        ConfidentialTransferInstruction::EnableNonConfidentialCredits,
+        token_program_id,
+        token_account,
+        authority,
+        multisig_signers,
+    )
+}
+
+/// Create a `DisableNonConfidentialCredits` instruction
+pub fn disable_non_confidential_credits(
+    token_program_id: &Pubkey,
+    token_account: &Pubkey,
+    authority: &Pubkey,
+    multisig_signers: &[&Pubkey],
+) -> Result<Instruction, ProgramError> {
+    enable_or_disable_balance_credits(
+        ConfidentialTransferInstruction::DisableNonConfidentialCredits,
         token_program_id,
         token_account,
         authority,

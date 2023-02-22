@@ -17,7 +17,7 @@ use {
     },
     spl_token_2022::{
         error::TokenError,
-        extension::{memo_transfer::MemoTransfer, ExtensionType},
+        extension::{memo_transfer::MemoTransfer, BaseStateWithExtensions, ExtensionType},
     },
     spl_token_client::token::TokenError as TokenClientError,
     std::sync::Arc,
@@ -100,14 +100,12 @@ async fn test_memo_transfers(
             &[&ctx.payer, &alice],
             ctx.last_blockhash,
         );
-        #[allow(clippy::useless_conversion)]
-        let err: TransactionError = ctx
+        let err = ctx
             .banks_client
             .process_transaction(tx)
             .await
             .unwrap_err()
-            .unwrap()
-            .into();
+            .unwrap();
         drop(ctx);
         assert_eq!(
             err,
